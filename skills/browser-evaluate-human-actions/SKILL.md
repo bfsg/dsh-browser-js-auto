@@ -85,6 +85,36 @@ async () => {   // 整个文件即一个 async 函数,可整个粘贴进 browser
 `const src = await (await fetch('/human-actions-demo.js')).text(); return await (0, eval)('(' + src + '\n)')();`
 **分步演示技巧**:把 helper 挂到 `window.__H`(一次注入),之后每次 `browser_evaluate` 只调一个动作(如 `__H.click(__H.$('#search-btn'))`),便于逐步截图、逐步核对返回状态;要一次跑完就整段粘贴。
 
+## 定位非明显元素(按内容/结构匹配)
+
+目标没有固定 id/类名,而是"内容里含某固定值"时(例如:点开按钮展开面板,在众多行里找到含某订单号/姓名的行,勾选它最前面的复选框,再点确认),按"取集合 → 文本过滤 → 行内定位 → 派发事件"四步走:
+
+```js
+// 1) 展开面板(按钮没有 id 时,按文案找)
+const expandBtn = [...document.querySelectorAll('button')]
+  .find(b => b.textContent.includes('展开'));
+await click(expandBtn);
+await waitFor('.row');                       // 等行渲染,别在空列表上 find
+
+// 2) 在众多行里找到含固定内容的那一行
+const target = [...document.querySelectorAll('.row')]
+  .find(r => r.textContent.includes('固定内容，如订单号/姓名'));
+if (!target) throw new Error('未找到含「固定内容」的行');
+
+// 3) 勾选这一行最前面的复选框
+await click(target.querySelector('input[type=checkbox]'));
+
+// 4) 按文案找「确认」并点击
+const ok = [...document.querySelectorAll('button')].find(b => b.textContent.includes('确认'));
+await click(ok);
+```
+
+要点:
+- 先 `waitFor` 容器再 `find` —— 列表可能是展开/异步后才渲染;
+- `find` 找不到要显式抛错(带关键词),别静默拿到 `undefined` 再报难懂的错;
+- `textContent.includes` 是包含匹配;文案不精确时可 `trim()` 或正则,多列时可精确到某列(如 `row.querySelectorAll('td')[0].textContent`);
+- 复选框类控件事件要派发到真正可交互的节点:原生就点 `input` 本身;UI 是自定义 `<label>`/`<span>` 包裹时,点那个被点击才有反应的节点。
+
 ## 常见坑
 
 | 症状 | 原因与修法 |
@@ -94,6 +124,7 @@ async () => {   // 整个文件即一个 async 函数,可整个粘贴进 browser
 | 输入框 value 变了但界面不刷新 | 只赋了 `value` 没派发 `input`;React 受控输入有 value tracker,直接赋值会被忽略 —— 先经原生 setter 写入(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,v)`)再派发 `input`;普通页面只需 `InputEvent('input',…)` |
 | 只派发一次 `click` 无效 | 部分框架/组件监听 pointer/mousedown 前缀;按上表完整序列派发,事件要发到具体元素且 `bubbles:true` |
 | 悬停/事件后旧引用失效 | 事件可能触发重渲染、元素被替换;每次操作前重新 `querySelector`,别跨事件持旧节点引用 |
+| 在"很多行"里找不到目标 | 别在空列表/未展开时 `find`;先 `waitFor` 容器,再按 `textContent.includes(固定值)` 过滤,找不到就显式抛错(带关键词) |
 | `isTrusted=false` 被网页拦截 | 合成事件的天花板;换 Playwright 受信输入,别硬绕 |
 | 用固定 `setTimeout` 等渲染,时灵时不灵 | 改 `waitFor` 轮询 + 超时报错;每步把关键状态 `return` 出来供调用方核对 |
 | 想要 CSS `:hover` 效果 | 合成事件**无法**触发 `:hover`(由浏览器真实指针命中决定),`mouseenter`/`mouseover` 只触发 JS 监听;要真 hover 用 Playwright 移动真实光标,或改用 class 切换 |
